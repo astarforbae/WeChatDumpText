@@ -2,6 +2,62 @@
 
 本项目用于分析从WeChat备份中提取的聊天数据库文件，可以导出私聊和群聊消息记录，支持引用回复识别、按时间范围筛选等功能。主要用于处理[wechatDataBackup](https://github.com/git-jiadong/wechatDataBackup)工具备份的微信聊天记录，将其导出为易读的文本格式。
 
+## 使用方法
+
+### 准备工作
+
+1. 首先使用[wechatDataBackup](https://github.com/git-jiadong/wechatDataBackup)工具导出微信聊天数据
+   - 下载并运行wechatDataBackup.exe
+   - 按照工具提示进行全量导出
+   - 随后在工具中选择一个聊天框，选择右上角最左边的图标（一个箭头，显示文本：“将此聊天框单独导出”），得到一个新的文件夹
+
+2. 将导出的数据文件夹放置到正确位置
+   - 将wechatDataBackup导出的整个文件夹（包含User目录和config.json）复制到本项目的下
+   - 确保文件夹结构如下所示：
+   ```
+   chat-evol/           # 本项目目录
+     |- main.py
+     |- README.md
+     |- ...
+     |- weixin-backup/       # wechatDataBackup导出的数据文件夹(可以自定义名称)
+            |- User/
+                |- wxid_xxx/
+                |- Msg/
+                    |- MicroMsg.db
+                    |- Multi/
+                        |- MSG.db
+                |- FileStorage/
+                    |- ...
+            |- config.json
+            |- wechatDataBackup.exe
+   ```
+
+3. 确认微信数据库路径
+   - 数据库文件通常位于导出文件夹的`User/wxid_xxx/Msg/Multi/MSG.db`
+   - 联系人信息通常位于`User/wxid_xxx/Msg/MicroMsg.db`
+
+### 使用示例
+
+使用下面的命令格式运行工具，根据需要替换相应的参数：
+
+```bash
+python main.py --db 导出文件夹路径/User/wxid_xxx/Msg/Multi/MSG.db --output 输出文件名.txt [其他参数]
+```
+
+例如，如果您将wechatDataBackup导出的文件夹命名为`weixin-alice`并放在本项目同级目录下，可以使用如下命令：
+
+**导出群聊消息：**
+```bash
+python main.py --db ../weixin-alice/User/wxid_xxx/Msg/Multi/MSG.db --output alice_group_chat.txt --group --self-id wxid_xxx
+```
+
+**导出私聊消息：**
+```bash
+python main.py --db ../weixin-alice/User/wxid_xxx/Msg/Multi/MSG.db --output alice_private_chat.txt --self-id wxid_xxx
+```
+
+> **注意：** 请将上述命令中的`wxid_xxx`替换为实际的微信ID，可以在导出文件夹的User目录下找到。
+
 ## 功能特点
 
 - 导出私聊和群聊消息
@@ -35,28 +91,6 @@ python main.py [参数]
 | `--group` | 导出群聊消息（不提供此参数则默认导出私聊） | `False` |
 | `--group-name` | 群聊名称 | `群聊` |
 | `--self-id` | 当前用户的微信ID | `your_wechat_id` |
-
-#### 使用示例
-
-**导出群聊消息**
-```bash
-python main.py --db weixin-example/User/your_wechat_id/Msg/Multi/MSG.db --output example_group_chat.txt --group
-```
-
-**导出私聊消息**
-```bash
-python main.py --db weixin-example/User/your_wechat_id/Msg/Multi/MSG.db --output example_private_chat.txt
-```
-
-**限定日期范围导出消息**
-```bash
-python main.py --group --from-date 2024-10-01 --to-date 2024-11-30 --output example_oct_nov_chat.txt
-```
-
-**限制导出消息数量**
-```bash
-python main.py --limit 500 --output example_limited.txt
-```
 
 ### 分析消息数据库 (analyze_msg_db.py)
 
@@ -98,6 +132,17 @@ python analyze_userdata_db.py [数据库路径] [-s] [-d] [-t 表名] [-a]
 接收者名称  (时间戳)
 回复内容
 ```
+
+## 常见问题
+
+**Q: 如何找到自己的微信ID?**  
+A: 微信ID通常在wechatDataBackup导出文件夹的User目录下，是以"wxid_"开头的文件夹名。
+
+**Q: 为什么有些消息显示的发送者名称不正确?**  
+A: 确保使用正确的`--self-id`参数，并确保MicroMsg.db文件完好，以便程序能正确获取联系人信息。
+
+**Q: 导出的消息数据不完整怎么办?**  
+A: 尝试使用wechatDataBackup导出前先退出并重新登录微信，确保所有数据都写入数据库。
 
 ## 隐私保护
 
