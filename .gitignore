@@ -1,0 +1,10 @@
+# 忽略所有以weixin开头的文件夹
+weixin*/
+
+# 忽略所有txt文件
+*.txt
+
+# 忽略Python编译文件
+__pycache__/
+*.py[cod]
+*$py.class 
