@@ -90,17 +90,17 @@ def load_contact_info(db_cursor):
 # 示例用法
 if __name__ == "__main__":
     # 这是一个示例的BytesExtra数据(十六进制表示)
-    sample_hex = "0a04081010001a1608011212777869645f34333439333433343932323132"
+    sample_hex = "0a0408101000111608011212777869645f7878787878787878787878"
     sample_bytes = bytes.fromhex(sample_hex)
     
     # 提取发送者ID
     sender_id = extract_sender_id(sample_bytes)
     print(f"提取的发送者ID: {sender_id}")
     
-    # 模拟联系人信息
+    # 模拟联系人信息 - 使用匿名示例数据
     mock_contacts = {
-        'wxid_4349343492212': ('deciderai', '李文浩老师'),
-        'q493902869': ('xfwang', '硕导王老师')
+        'wxid_example1': ('username1', '用户1'),
+        'wxid_example2': ('username2', '用户2')
     }
     
     # 获取显示名称
