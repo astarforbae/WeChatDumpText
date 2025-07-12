@@ -649,14 +649,8 @@ def write_chat_records(messages: List[Tuple], output_path: str, contact_map: Dic
 
             # 如果存在引用内容，先显示引用内容
             if quoted_text:
-                # 美化引用内容的显示格式
-                quoted_lines = quoted_text.split('\n')
-                f.write("┌─────────────────────────────\n")
-                for line in quoted_lines:
-                    # 确保只有有效内容才被显示
-                    if line.strip():
-                        f.write(f"│ {line}\n")
-                f.write("└─────────────────────────────\n")
+                # 直接显示引用内容，不添加边框
+                f.write(f"{quoted_text}\n")
 
             # 检查是否有回复内容
             reply_text = None
