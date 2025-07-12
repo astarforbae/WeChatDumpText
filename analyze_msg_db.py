@@ -48,7 +48,7 @@ def extract_sender_info(bytes_extra):
     
     return sender_info
 
-def analyze_messages(db_path, limit=20, deep_analysis=False, test_patterns=False):
+def analyze_messages(db_path, limit=20, deep_analysis=False, test_patterns=False, desc_order=False):
     """分析MSG表中的消息，重点关注发送方信息"""
     if not os.path.exists(db_path):
         print(f"错误: 数据库文件不存在: {db_path}")
@@ -68,10 +68,11 @@ def analyze_messages(db_path, limit=20, deep_analysis=False, test_patterns=False
         column_names = [col[1] for col in columns]
         
         # 获取消息数据
+        order_by = "DESC" if desc_order else "ASC"
         cursor.execute(f"""
-            SELECT localId, TalkerId, IsSender, StrTalker, StrContent, BytesExtra 
+            SELECT localId, TalkerId, IsSender, StrTalker, StrContent, BytesExtra, CompressContent 
             FROM MSG 
-            ORDER BY CreateTime 
+            ORDER BY CreateTime {order_by}
             LIMIT {limit}
         """)
         messages = cursor.fetchall()
@@ -87,7 +88,12 @@ def analyze_messages(db_path, limit=20, deep_analysis=False, test_patterns=False
         ]
         
         for msg in messages:
-            localId, talkerId, isSender, strTalker, strContent, bytesExtra = msg
+            if len(msg) < 6:
+                print("消息数据不完整，跳过")
+                continue
+                
+            localId, talkerId, isSender, strTalker, strContent, bytesExtra = msg[:6]
+            compressContent = msg[6] if len(msg) > 6 else None
             
             print(f"消息ID: {localId}")
             print(f"会话ID: {talkerId}")
@@ -152,6 +158,60 @@ def analyze_messages(db_path, limit=20, deep_analysis=False, test_patterns=False
                         else:
                             print(f"  {key}: {value}")
             
+            # 分析CompressContent字段
+            if compressContent:
+                print(f"CompressContent长度: {len(compressContent)} 字节")
+                
+                # 十六进制显示前60个字节
+                if deep_analysis:
+                    compress_hex = compressContent.hex()
+                    print(f"CompressContent(hex): {compress_hex[:60]}..." if len(compress_hex) > 60 else compress_hex)
+                    
+                    # 尝试解码为UTF-8和UTF-16
+                    try:
+                        utf8_text = compressContent.decode('utf-8', errors='ignore')
+                        if len(utf8_text) > 0:
+                            print(f"CompressContent(utf-8): {utf8_text[:100]}..." if len(utf8_text) > 100 else utf8_text)
+                    except:
+                        pass
+                        
+                    try:
+                        utf16_text = compressContent.decode('utf-16-le', errors='ignore')
+                        if len(utf16_text) > 0:
+                            print(f"CompressContent(utf-16): {utf16_text[:100]}..." if len(utf16_text) > 100 else utf16_text)
+                    except:
+                        pass
+                    
+                    # 查找可能的XML内容
+                    xml_pattern = re.compile(b'<msg.*?</msg>', re.DOTALL)
+                    xml_matches = xml_pattern.findall(compressContent)
+                    
+                    if xml_matches:
+                        for i, xml_data in enumerate(xml_matches):
+                            try:
+                                xml_text = xml_data.decode('utf-8', errors='ignore')
+                                print(f"XML内容 #{i+1}: {xml_text[:200]}..." if len(xml_text) > 200 else f"XML内容 #{i+1}: {xml_text}")
+                                
+                                # 提取有用的XML标签
+                                tags_to_extract = ['title', 'des', 'content', 'url', 'sourcedisplayname', 'sourceid']
+                                for tag in tags_to_extract:
+                                    tag_pattern = re.compile(f'<{tag}>(.*?)</{tag}>', re.DOTALL)
+                                    tag_matches = tag_pattern.findall(xml_text)
+                                    if tag_matches:
+                                        for j, content in enumerate(tag_matches):
+                                            print(f"  {tag} #{j+1}: {content}")
+                                
+                                # 提取属性
+                                attrs_to_extract = ['appid', 'sdkver', 'title', 'des', 'sourcedisplayname', 'sourceid']
+                                for attr in attrs_to_extract:
+                                    attr_pattern = re.compile(f'{attr}="(.*?)"', re.DOTALL)
+                                    attr_matches = attr_pattern.findall(xml_text)
+                                    if attr_matches:
+                                        for j, content in enumerate(attr_matches):
+                                            print(f"  {attr}属性 #{j+1}: {content}")
+                            except Exception as e:
+                                print(f"XML解析错误: {e}")
+            
             print("-" * 60)
         
         # 尝试查询Contact表来获取用户名映射
@@ -211,7 +271,8 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--num', type=int, default=20, help='分析的消息数量')
     parser.add_argument('-d', '--deep', action='store_true', help='深度分析BytesExtra字段')
     parser.add_argument('-t', '--test', action='store_true', help='测试所有可能的提取模式')
+    parser.add_argument('-o', '--order', action='store_true', help='按时间戳降序排序')
     
     args = parser.parse_args()
     
-    analyze_messages(args.db_path, args.num, args.deep, args.test) 
+    analyze_messages(args.db_path, args.num, args.deep, args.test, args.order) 

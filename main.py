@@ -143,142 +143,215 @@ def parse_compress_content(compress_content):
     dict: 包含引用消息的信息，如果不是引用消息则返回None
     {
         'quoted_content': 被引用的消息内容,
-        'quoted_sender_id': 被引用消息的发送者ID (可能为None)
+        'quoted_sender_id': 被引用消息的发送者ID (可能为None),
+        'reply_content': 回复的消息内容 (可能为None)
     }
     """
     if not compress_content:
         return None
         
     try:
-        # 尝试从CompressContent中提取引用的消息内容
+        # 提取引用的消息内容
         quoted_content = None
         quoted_sender_id = None
+        reply_content = None
         
-        # 微信引用消息通常采用XML格式
-        # 1. 首先尝试完整解析XML
-        try:
-            # 查找XML格式的内容
-            xml_pattern = re.compile(b'<msg.*?</msg>', re.DOTALL)
-            xml_matches = xml_pattern.findall(compress_content)
+        # 检查是否包含XML格式的数据
+        if b'<msg>' in compress_content:
+            # 尝试直接从整个数据中提取<title>标签内容
+            title_pattern = re.compile(b'<title>(.*?)</[^>]*?>', re.DOTALL)
+            title_matches = title_pattern.findall(compress_content)
             
-            if xml_matches:
-                for xml_data in xml_matches:
+            if title_matches and len(title_matches) > 0:
+                for title_match in title_matches:
                     try:
-                        xml_text = xml_data.decode('utf-8', errors='ignore')
-                        
-                        # 尝试提取<title>标签中的内容（通常是引用的原始消息）
-                        title_match = re.search(r'<title>(.*?)</title>', xml_text)
-                        if title_match:
-                            quoted_content = title_match.group(1).strip()
-                            
-                        # 尝试提取<content>标签中的内容（可能包含更多信息）
-                        if not quoted_content:
-                            content_match = re.search(r'<content>(.*?)</content>', xml_text)
-                            if content_match:
-                                content_text = content_match.group(1).strip()
-                                # 从content中可能需要进一步解析
-                                if content_text:
-                                    quoted_content = content_text
-                        
-                        # 尝试提取发送者ID
-                        sourceid_match = re.search(r'sourceid="([^"]+)"', xml_text)
-                        if sourceid_match:
-                            quoted_sender_id = sourceid_match.group(1)
-                        
-                        # 如果找到了引用内容，可以结束循环
-                        if quoted_content:
+                        # 解码标题内容
+                        title_text = title_match.decode('utf-8', errors='ignore').strip()
+                        if title_text and len(title_text) > 1:
+                            quoted_content = title_text
                             break
                     except:
                         continue
-        except:
-            pass
-        
-        # 2. 如果XML解析失败，尝试二进制匹配特定模式
-        if not quoted_content:
-            # 在压缩数据中查找可能包含文本的部分
-            # 微信的引用消息通常在某些固定位置存储引用文本
             
-            # 尝试直接解码整个数据
-            try:
-                decoded = compress_content.decode('utf-8', errors='ignore')
-                
-                # 寻找可能的消息片段，如有意义的连续汉字或字母
-                words = re.findall(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', decoded)
-                if words:
-                    # 只取最长的片段作为可能的引用内容
-                    longest_word = max(words, key=len)
-                    if len(longest_word) >= 3:  # 确保是有意义的内容
-                        quoted_content = longest_word
-            except:
-                pass
-                
-            # 如果直接解码还是没找到，尝试在二进制数据中查找可能的文本块
+            # 如果没有找到<title>，尝试提取<des>标签
             if not quoted_content:
-                # 微信引用消息中的文本可能是UTF-16LE编码的
+                des_pattern = re.compile(b'<des>(.*?)</[^>]*?>', re.DOTALL)
+                des_matches = des_pattern.findall(compress_content)
+                
+                if des_matches and len(des_matches) > 0:
+                    for des_match in des_matches:
+                        try:
+                            des_text = des_match.decode('utf-8', errors='ignore').strip()
+                            if des_text and len(des_text) > 1:
+                                quoted_content = des_text
+                                break
+                        except:
+                            continue
+            
+            # 尝试提取引用消息的发送者ID
+            from_pattern = re.compile(b'<fromusername>(.*?)</', re.DOTALL)
+            from_matches = from_pattern.findall(compress_content)
+            
+            if from_matches and len(from_matches) > 0:
                 try:
-                    utf16_text = compress_content.decode('utf-16-le', errors='ignore')
-                    words = re.findall(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', utf16_text)
-                    if words:
-                        longest_word = max(words, key=len)
-                        if len(longest_word) >= 3:
-                            quoted_content = longest_word
+                    quoted_sender_id = from_matches[0].decode('utf-8', errors='ignore').strip()
                 except:
                     pass
+            
+            # 提取可能的回复内容（在一些情况下，回复内容可能在原始消息的StrContent中）
+            # 因此这部分通常由调用函数处理
         
-            # 查找特定的引用消息二进制模式（根据微信的数据格式可能需要调整）
-            if not quoted_content:
-                # 一些常见的二进制数据模式
-                patterns = [
-                    # 可能需要根据实际情况调整这些模式
-                    (b'\x12.\x0a([\x00-\xff]{5,100})', 0),  # 模式1
-                    (b'\x0a.\x12([\x00-\xff]{5,100})', 0),  # 模式2
-                    (b'\x1a.([\x00-\xff]{5,100})', 0)       # 模式3
-                ]
+        # 如果通过正则表达式没有找到内容，尝试使用更宽松的方法
+        if not quoted_content:
+            # 解码整个内容为文本
+            try:
+                content_text = compress_content.decode('utf-8', errors='ignore')
                 
-                for pattern, group_index in patterns:
-                    try:
-                        matches = re.finditer(pattern, compress_content, re.DOTALL)
-                        for match in matches:
-                            data_chunk = match.group(group_index + 1)
-                            
-                            # 尝试不同的编码解码文本
-                            for encoding in ['utf-8', 'utf-16-le', 'gbk', 'gb18030']:
-                                try:
-                                    text = data_chunk.decode(encoding, errors='ignore')
-                                    # 检查是否包含有意义的文本
-                                    if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', text):
-                                        quoted_content = text.strip()
-                                        break
-                                except:
-                                    continue
-                            
-                            if quoted_content:
-                                break
-                    except:
-                        continue
-                    
-                    if quoted_content:
-                        break
+                # 使用更宽松的正则表达式查找<title>标签
+                loose_title_pattern = re.compile(r'<title>(.*?)<[/\\]', re.DOTALL)
+                loose_title_matches = loose_title_pattern.findall(content_text)
+                
+                if loose_title_matches and len(loose_title_matches) > 0:
+                    for loose_match in loose_title_matches:
+                        if loose_match and len(loose_match.strip()) > 1:
+                            quoted_content = loose_match.strip()
+                            break
+            except:
+                pass
         
-        # 清理提取的文本
+        # 清理提取的内容
         if quoted_content:
             # 移除多余的控制字符和非打印字符
             quoted_content = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', quoted_content)
+            
+            # 如果内容末尾有奇怪的XML片段或乱码，尝试清理
+            # 例如："text</,]p<des>"这样的格式
+            if '<' in quoted_content:
+                quoted_content = quoted_content.split('<')[0].strip()
+            
             # 限制长度
             if len(quoted_content) > 100:
                 quoted_content = quoted_content[:97] + "..."
         
         # 只有当找到了引用内容时才返回结果
         if quoted_content:
-            return {
+            result = {
                 'quoted_content': quoted_content,
                 'quoted_sender_id': quoted_sender_id
             }
+            
+            if reply_content:
+                result['reply_content'] = reply_content
+                
+            return result
         
         return None
     except Exception as e:
-        # 解析错误时返回None
+        print(f"解析引用消息时出错: {str(e)}")
         return None
+
+def decode_hex_string(hex_str):
+    """
+    尝试将十六进制字符串或其他编码字符串解码为可读字符串
+    
+    参数:
+    hex_str (str): 可能的编码字符串
+    
+    返回:
+    str: 解码后的字符串，如果解码失败则返回None
+    """
+    if not hex_str:
+        return None
+        
+    # 如果字符串看起来不像是普通文本(至少含有3个连续的可见中文或英文字符)
+    if not re.search(r'[\u4e00-\u9fa5a-zA-Z]{3,}', hex_str):
+        # 尝试以十六进制解码
+        if re.match(r'^[0-9a-fA-F]+$', hex_str):
+            try:
+                # 确保长度是偶数
+                if len(hex_str) % 2 != 0:
+                    hex_str = hex_str + "0"
+                    
+                # 转换为字节
+                try:
+                    hex_bytes = bytes.fromhex(hex_str)
+                except ValueError:
+                    # 处理可能的无效十六进制字符串
+                    cleaned_hex = ''.join(c for c in hex_str if c in "0123456789abcdefABCDEF")
+                    if len(cleaned_hex) % 2 != 0:
+                        cleaned_hex = cleaned_hex + "0"
+                    hex_bytes = bytes.fromhex(cleaned_hex)
+                
+                # 尝试使用不同的编码解码
+                for encoding in ['utf-8', 'utf-16-le', 'utf-16-be', 'gbk', 'gb18030', 'big5', 'shift_jis']:
+                    try:
+                        decoded = hex_bytes.decode(encoding, errors='ignore')
+                        # 检查是否包含有意义的文本 (至少3个可见字符)
+                        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', decoded):
+                            return decoded.strip()
+                    except:
+                        continue
+            except:
+                pass
+        
+        # 尝试base64解码
+        try:
+            # 调整字符串长度为4的倍数
+            padding_needed = 4 - (len(hex_str) % 4) if len(hex_str) % 4 else 0
+            padded_str = hex_str + "=" * padding_needed
+            
+            # 尝试标准base64
+            try:
+                import base64
+                decoded_bytes = base64.b64decode(padded_str)
+                for encoding in ['utf-8', 'utf-16-le', 'utf-16-be', 'gbk', 'gb18030']:
+                    try:
+                        decoded = decoded_bytes.decode(encoding, errors='ignore')
+                        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', decoded):
+                            return decoded.strip()
+                    except:
+                        continue
+            except:
+                pass
+                
+            # 尝试url安全的base64
+            try:
+                decoded_bytes = base64.urlsafe_b64decode(padded_str)
+                for encoding in ['utf-8', 'utf-16-le', 'utf-16-be']:
+                    try:
+                        decoded = decoded_bytes.decode(encoding, errors='ignore')
+                        if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', decoded):
+                            return decoded.strip()
+                    except:
+                        continue
+            except:
+                pass
+        except:
+            pass
+        
+        # 尝试直接解码字符串（处理可能的ASCII或其他编码）
+        for encoding in ['utf-8', 'latin1', 'iso-8859-1']:
+            try:
+                # 将字符串转为字节，然后尝试不同编码解码
+                byte_data = hex_str.encode('latin1')
+                decoded = byte_data.decode(encoding, errors='ignore')
+                if re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]{3,}', decoded) and decoded != hex_str:
+                    return decoded.strip()
+            except:
+                continue
+                
+    # 如果所有解码尝试都失败，但字符串本身看起来有意义，则返回原始字符串
+    # 检查是否包含可读文本（非十六进制字符串）
+    if re.search(r'[^0-9a-fA-F]', hex_str) and len(hex_str) >= 3:
+        return hex_str.strip()
+        
+    # 如果没有找到有意义的文本，则尝试提取可能的微信表情符号或特殊字符
+    emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U000024C2-\U0001F251]+')
+    emoji_matches = emoji_pattern.findall(hex_str)
+    if emoji_matches:
+        return ' '.join(emoji_matches)
+        
+    return hex_str  # 返回原始字符串，因为我们无法解码它
 
 # ===== 联系人信息获取函数 =====
 def get_contact_map(db_path: str) -> Dict[str, str]:
@@ -359,21 +432,27 @@ def process_message_content(content: str) -> str:
     # 可以添加更多的内容处理逻辑
     return content.strip()
 
-def should_skip_message(content: str) -> bool:
+def should_skip_message(content: str, has_quoted_content: bool = False) -> bool:
     """
     判断是否应该跳过某些消息
     
     参数:
     content: 消息内容
+    has_quoted_content: 是否包含引用内容
     
     返回:
     如果应该跳过则返回True，否则返回False
     """
-    if content is None:
+    # 如果有引用内容，不跳过这条消息
+    if has_quoted_content:
+        return False
+    
+    # 如果内容为空且没有引用内容，则跳过
+    if content is None or content.strip() == "":
         return True
     
-    content = content.strip()
     # 跳过特定格式的消息
+    content = content.strip()
     if (content.startswith('<') or 
         content.startswith('sk') or 
         content == '收到一条图片' or
@@ -481,28 +560,17 @@ def write_chat_records(messages: List[Tuple], output_path: str, contact_map: Dic
                 
                 timestamp, is_sender, content, talker_id, msg_type, bytes_extra, compress_content = message
                 
-                # 首先检查是否应该跳过这条消息
-                if should_skip_message(content):
-                    # 对于空内容的消息，检查是否包含引用消息
-                    if not content and compress_content:
-                        quoted_msg = parse_compress_content(compress_content)
-                        if quoted_msg and quoted_msg['quoted_content']:
-                            # 这是一个引用回复消息，我们应该处理它而不是跳过
-                            pass
-                        else:
-                            continue
-                    else:
-                        continue
+                # 检查是否包含引用回复内容
+                quoted_msg = parse_compress_content(compress_content)
+                has_quoted_content = quoted_msg and quoted_msg.get('quoted_content') is not None
+                quoted_text = quoted_msg.get('quoted_content') if has_quoted_content else None
+                
+                # 检查是否应该跳过这条消息
+                if should_skip_message(content, has_quoted_content):
+                    continue
                 
                 # 处理消息内容
-                processed_content = process_message_content(content)
-                
-                # 检查是否包含引用回复内容
-                quoted_text = None
-                if compress_content:
-                    quoted_msg = parse_compress_content(compress_content)
-                    if quoted_msg and quoted_msg['quoted_content']:
-                        quoted_text = quoted_msg['quoted_content']
+                processed_content = process_message_content(content) if content else ""
                 
                 # 确定发送者显示名称
                 if is_sender == 1:
@@ -544,19 +612,16 @@ def write_chat_records(messages: List[Tuple], output_path: str, contact_map: Dic
                     continue
                 timestamp, is_sender, content, talker_id, compress_content = message
                 
-                if should_skip_message(content):
-                    # 对于空内容的消息，检查是否包含引用消息
-                    if not content and compress_content:
-                        quoted_msg = parse_compress_content(compress_content)
-                        if quoted_msg and quoted_msg['quoted_content']:
-                            # 这是一个引用回复消息，我们应该处理它而不是跳过
-                            pass
-                        else:
-                            continue
-                    else:
-                        continue
+                # 检查是否包含引用回复内容
+                quoted_msg = parse_compress_content(compress_content)
+                has_quoted_content = quoted_msg and quoted_msg.get('quoted_content') is not None
+                quoted_text = quoted_msg.get('quoted_content') if has_quoted_content else None
+                
+                # 检查是否应该跳过这条消息
+                if should_skip_message(content, has_quoted_content):
+                    continue
                     
-                processed_content = process_message_content(content)
+                processed_content = process_message_content(content) if content else ""
                 
                 # 如果是自己发送的消息
                 if is_sender == 1:
@@ -577,30 +642,32 @@ def write_chat_records(messages: List[Tuple], output_path: str, contact_map: Dic
                             if contact_id in talker_id or talker_id in contact_id:
                                 name = contact_name
                                 break
-                
-                # 检查是否包含引用回复内容
-                quoted_text = None
-                if compress_content:
-                    quoted_msg = parse_compress_content(compress_content)
-                    if quoted_msg and quoted_msg['quoted_content']:
-                        quoted_text = quoted_msg['quoted_content']
             
             # 写入聊天记录
             formatted_time = format_timestamp(timestamp)
             f.write(f"{name}  ({formatted_time})\n")
-            
+
             # 如果存在引用内容，先显示引用内容
             if quoted_text:
                 # 美化引用内容的显示格式
                 quoted_lines = quoted_text.split('\n')
                 f.write("┌─────────────────────────────\n")
                 for line in quoted_lines:
-                    f.write(f"│ {line}\n")
+                    # 确保只有有效内容才被显示
+                    if line.strip():
+                        f.write(f"│ {line}\n")
                 f.write("└─────────────────────────────\n")
-            
+
+            # 检查是否有回复内容
+            reply_text = None
+            if quoted_msg and 'reply_content' in quoted_msg and quoted_msg['reply_content']:
+                reply_text = quoted_msg['reply_content']
+
             # 如果原始消息非空，显示消息内容
             if processed_content:
                 f.write(f"{processed_content}\n\n")
+            elif reply_text:  # 如果原始消息为空但有回复内容，则显示回复内容
+                f.write(f"{reply_text}\n\n")
             elif quoted_text:  # 如果原始消息为空但有引用内容，则添加空行
                 f.write("\n")
             else:
